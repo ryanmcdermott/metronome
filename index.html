@@ -1,0 +1,493 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Metronome</title>
+    <style>
+        :root {
+            --primary-color: #4a6da7;
+            --secondary-color: #a74a4a;
+            --background-color: #f5f5f5;
+            --pendulum-color: #333;
+            --wood-color: #8B4513;
+        }
+
+        body {
+            font-family: 'Arial', sans-serif;
+            background-color: var(--background-color);
+            margin: 0;
+            padding: 0;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            color: #333;
+        }
+
+        .container {
+            width: 100%;
+            max-width: 500px;
+            text-align: center;
+            background-color: white;
+            padding: 30px;
+            border-radius: 10px;
+            box-shadow: 0 10px 25px rgba(0, 0, 0, 0.1);
+        }
+
+        h1 {
+            margin: 0 0 20px 0;
+            color: var(--primary-color);
+        }
+
+        .controls {
+            margin: 30px 0;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            gap: 15px;
+        }
+
+        button {
+            padding: 10px 20px;
+            border: none;
+            border-radius: 5px;
+            font-size: 16px;
+            font-weight: bold;
+            cursor: pointer;
+            transition: all 0.2s ease;
+        }
+
+        #playBtn {
+            background-color: var(--primary-color);
+            color: white;
+        }
+
+        #playBtn:hover {
+            background-color: #3a5d97;
+        }
+
+        #playBtn.playing {
+            background-color: var(--secondary-color);
+        }
+
+        .bpm-control {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        input[type="number"] {
+            width: 60px;
+            padding: 8px;
+            border: 1px solid #ddd;
+            border-radius: 5px;
+            font-size: 16px;
+        }
+
+        input[type="range"] {
+            width: 200px;
+            margin: 0;
+        }
+
+        .metronome {
+            position: relative;
+            height: 250px;
+            margin: 20px auto;
+        }
+
+        .metronome-body {
+            width: 140px;
+            height: 180px;
+            background-color: var(--wood-color);
+            margin: 0 auto;
+            border-radius: 10px 10px 0 0;
+            position: relative;
+            box-shadow: 0 5px 15px rgba(0, 0, 0, 0.2);
+        }
+
+        .pendulum-container {
+            position: absolute;
+            top: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            width: 4px;
+            height: 160px;
+            transform-origin: top center;
+        }
+
+        .pendulum {
+            position: absolute;
+            width: 4px;
+            height: 160px;
+            background-color: var(--pendulum-color);
+        }
+
+        .pendulum-weight {
+            position: absolute;
+            width: 30px;
+            height: 30px;
+            background-color: var(--pendulum-color);
+            border-radius: 50%;
+            bottom: -15px;
+            left: 50%;
+            transform: translateX(-50%);
+        }
+
+        .tick-marks {
+            width: 100%;
+            height: 30px;
+            display: flex;
+            justify-content: space-between;
+            padding: 0 20px;
+            position: absolute;
+            top: 80px;
+        }
+
+        .tick {
+            width: 2px;
+            height: 10px;
+            background-color: rgba(255, 255, 255, 0.7);
+        }
+
+        .center-tick {
+            height: 20px;
+        }
+
+        .metronome-base {
+            width: 180px;
+            height: 30px;
+            background-color: var(--wood-color);
+            margin: 0 auto;
+            border-radius: 0 0 10px 10px;
+            box-shadow: 0 5px 15px rgba(0, 0, 0, 0.2);
+        }
+
+        .current-beat {
+            font-size: 24px;
+            font-weight: bold;
+            color: var(--primary-color);
+            margin-top: 20px;
+        }
+
+        .beats-control {
+            margin-top: 20px;
+            display: flex;
+            justify-content: center;
+            gap: 10px;
+        }
+
+        .beats-control label {
+            margin-right: 10px;
+        }
+
+        #beatsPerMeasure {
+            width: 60px;
+        }
+    </style>
+</head>
+
+<body>
+    <div class="container">
+        <h1>Metronome</h1>
+
+        <div class="metronome">
+            <div class="metronome-body">
+                <div class="tick-marks">
+                    <div class="tick"></div>
+                    <div class="tick center-tick"></div>
+                    <div class="tick"></div>
+                </div>
+                <div class="pendulum-container" id="pendulum">
+                    <div class="pendulum">
+                        <div class="pendulum-weight"></div>
+                    </div>
+                </div>
+            </div>
+            <div class="metronome-base"></div>
+        </div>
+
+        <div class="current-beat" id="beatCounter">Beat: 1</div>
+
+        <div class="controls">
+            <button id="playBtn">Start</button>
+
+            <div class="bpm-control">
+                <input type="number" id="bpmInput" min="40" max="240" value="100">
+                <span>BPM</span>
+                <input type="range" id="bpmSlider" min="40" max="240" value="100">
+            </div>
+        </div>
+
+        <div class="beats-control">
+            <label for="beatsPerMeasure">Beats per measure:</label>
+            <input type="number" id="beatsPerMeasure" min="1" max="12" value="4">
+        </div>
+    </div>
+
+    <script>
+        // Audio context for metronome sound
+        let audioContext = null;
+
+        // Metronome state
+        let isPlaying = false;
+        let tempo = 100; // BPM
+        let beatsPerMeasure = 4;
+        let currentBeat = 1;
+        let pendulumAngle = 0;
+        let lastSwingDirection = 1; // 1 for right, -1 for left
+
+        // Timing variables
+        let nextNoteTime = 0;
+        let timerID = null;
+        let lastTickTime = 0;
+
+        // DOM elements
+        const playBtn = document.getElementById('playBtn');
+        const bpmInput = document.getElementById('bpmInput');
+        const bpmSlider = document.getElementById('bpmSlider');
+        const beatsPerMeasureInput = document.getElementById('beatsPerMeasure');
+        const pendulumElement = document.getElementById('pendulum');
+        const beatCounter = document.getElementById('beatCounter');
+
+        // Initialize audio context when user interacts
+        function initAudio() {
+            if (!audioContext) {
+                audioContext = new (window.AudioContext || window.webkitAudioContext)();
+            }
+        }
+
+        // Create wooden click sound using Web Audio API
+        function createWoodenClickSound(time, isAccented) {
+            if (!audioContext) return;
+
+            // Create audio nodes
+            const clickOscillator = audioContext.createOscillator();
+            const noiseBuffer = createNoiseBuffer();
+            const noiseSource = audioContext.createBufferSource();
+            const clickGain = audioContext.createGain();
+            const noiseGain = audioContext.createGain();
+            const masterGain = audioContext.createGain();
+            const highpassFilter = audioContext.createBiquadFilter();
+            const lowpassFilter = audioContext.createBiquadFilter();
+
+            // Set up noise source
+            noiseSource.buffer = noiseBuffer;
+
+            // Configure oscillator for initial attack transient
+            clickOscillator.type = 'triangle';
+            clickOscillator.frequency.value = isAccented ? 2200 : 1800; // Higher pitch for accented beat
+
+            // Configure filters
+            highpassFilter.type = 'highpass';
+            highpassFilter.frequency.value = 800;
+            highpassFilter.Q.value = 1;
+
+            lowpassFilter.type = 'lowpass';
+            lowpassFilter.frequency.value = 5000;
+            lowpassFilter.Q.value = 1;
+
+            // Set up gain nodes
+            clickGain.gain.value = 0;
+            noiseGain.gain.value = 0;
+            masterGain.gain.value = isAccented ? 0.7 : 0.5; // Accented beats are louder
+
+            // Connect the audio graph
+            // Click component path
+            clickOscillator.connect(clickGain);
+            clickGain.connect(highpassFilter);
+
+            // Noise component path
+            noiseSource.connect(noiseGain);
+            noiseGain.connect(lowpassFilter);
+
+            // Combine and output
+            highpassFilter.connect(masterGain);
+            lowpassFilter.connect(masterGain);
+            masterGain.connect(audioContext.destination);
+
+            // Schedule click envelope
+            const startTime = time;
+            const clickDuration = 0.03; // 30ms for the click sound
+
+            // Schedule the click component (quick attack, quick decay)
+            clickOscillator.start(startTime);
+            clickOscillator.stop(startTime + clickDuration);
+
+            // Envelope for click
+            clickGain.gain.setValueAtTime(0, startTime);
+            clickGain.gain.linearRampToValueAtTime(0.9, startTime + 0.001);
+            clickGain.gain.exponentialRampToValueAtTime(0.001, startTime + clickDuration);
+
+            // Schedule the noise component (adds texture)
+            noiseSource.start(startTime);
+            noiseSource.stop(startTime + clickDuration);
+
+            // Envelope for noise
+            noiseGain.gain.setValueAtTime(0, startTime);
+            noiseGain.gain.linearRampToValueAtTime(0.3, startTime + 0.002);
+            noiseGain.gain.exponentialRampToValueAtTime(0.001, startTime + clickDuration);
+
+            // Clean up
+            setTimeout(() => {
+                masterGain.disconnect();
+            }, (time - audioContext.currentTime) * 1000 + 100);
+        }
+
+        // Create noise buffer for wooden texture
+        function createNoiseBuffer() {
+            const bufferSize = audioContext.sampleRate * 0.1; // 100ms buffer
+            const buffer = audioContext.createBuffer(1, bufferSize, audioContext.sampleRate);
+            const data = buffer.getChannelData(0);
+
+            // Fill buffer with noise
+            for (let i = 0; i < bufferSize; i++) {
+                // Create noise with more energy in higher frequencies for "wooden" character
+                data[i] = (Math.random() * 2 - 1) * Math.pow(i / bufferSize, 0.5);
+            }
+
+            return buffer;
+        }
+
+        // Schedule the next tick
+        function scheduleNote() {
+            const secondsPerBeat = 60.0 / tempo;
+
+            // Determine if this is the first beat of the measure
+            const isAccented = currentBeat === 1;
+
+            // Schedule the tick
+            createWoodenClickSound(nextNoteTime, isAccented);
+
+            // Update UI - we need to check if we're still in the playing state
+            if (isPlaying) {
+                // Show current beat
+                beatCounter.textContent = `Beat: ${currentBeat}`;
+
+                // Calculate pendulum angle based on current beat
+                const maxAngle = 30; // Maximum swing angle in degrees
+                const targetAngle = lastSwingDirection * maxAngle;
+
+                // Animate pendulum
+                animatePendulum(targetAngle);
+
+                // Change swing direction for next beat
+                lastSwingDirection *= -1;
+
+                // Record last tick time for animations
+                lastTickTime = audioContext.currentTime;
+
+                // Advance beat counter
+                currentBeat++;
+                if (currentBeat > beatsPerMeasure) {
+                    currentBeat = 1;
+                }
+            }
+
+            // Advance time for next note
+            nextNoteTime += secondsPerBeat;
+        }
+
+        // Animation for pendulum
+        function animatePendulum(targetAngle) {
+            pendulumElement.style.transform = `translateX(-50%) rotate(${targetAngle}deg)`;
+        }
+
+        // Main timing scheduler
+        function scheduler() {
+            // Check if audio context is available
+            if (!audioContext) return;
+
+            // Schedule notes until we've scheduled ahead enough
+            while (nextNoteTime < audioContext.currentTime + 0.1) {
+                scheduleNote();
+            }
+
+            // Continue scheduling
+            timerID = setTimeout(scheduler, 25);
+        }
+
+        // Start metronome
+        function startMetronome() {
+            if (!isPlaying) {
+                initAudio();
+
+                // Reset timing
+                currentBeat = 1;
+                nextNoteTime = audioContext.currentTime;
+                lastSwingDirection = 1;
+
+                // Update UI
+                playBtn.textContent = 'Stop';
+                playBtn.classList.add('playing');
+                beatCounter.textContent = `Beat: ${currentBeat}`;
+
+                isPlaying = true;
+
+                // Start scheduler
+                scheduler();
+            }
+        }
+
+        // Stop metronome
+        function stopMetronome() {
+            if (isPlaying) {
+                // Clear scheduling timer
+                clearTimeout(timerID);
+                timerID = null;
+
+                // Reset UI
+                playBtn.textContent = 'Start';
+                playBtn.classList.remove('playing');
+
+                // Reset pendulum to center
+                pendulumElement.style.transform = 'translateX(-50%) rotate(0deg)';
+
+                isPlaying = false;
+            }
+        }
+
+        // Toggle metronome
+        function toggleMetronome() {
+            if (isPlaying) {
+                stopMetronome();
+            } else {
+                startMetronome();
+            }
+        }
+
+        // Event listeners
+        playBtn.addEventListener('click', toggleMetronome);
+
+        bpmInput.addEventListener('change', () => {
+            tempo = Number(bpmInput.value);
+            tempo = Math.min(Math.max(tempo, 40), 240); // Clamp between 40-240
+            bpmInput.value = tempo;
+            bpmSlider.value = tempo;
+        });
+
+        bpmSlider.addEventListener('input', () => {
+            tempo = Number(bpmSlider.value);
+            bpmInput.value = tempo;
+        });
+
+        beatsPerMeasureInput.addEventListener('change', () => {
+            beatsPerMeasure = Number(beatsPerMeasureInput.value);
+            beatsPerMeasure = Math.min(Math.max(beatsPerMeasure, 1), 12); // Clamp between 1-12
+            beatsPerMeasureInput.value = beatsPerMeasure;
+
+            // Reset beat counter if needed
+            if (currentBeat > beatsPerMeasure) {
+                currentBeat = 1;
+                beatCounter.textContent = `Beat: ${currentBeat}`;
+            }
+        });
+
+        // Sync BPM input and slider initially
+        bpmInput.value = tempo;
+        bpmSlider.value = tempo;
+    </script>
+</body>
+
+</html>
