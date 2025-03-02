@@ -47,6 +47,7 @@
             justify-content: center;
             align-items: center;
             gap: 15px;
+            flex-wrap: wrap;
         }
 
         button {
@@ -57,6 +58,7 @@
             font-weight: bold;
             cursor: pointer;
             transition: all 0.2s ease;
+            -webkit-tap-highlight-color: transparent;
         }
 
         #playBtn {
@@ -76,6 +78,8 @@
             display: flex;
             align-items: center;
             gap: 10px;
+            flex-wrap: wrap;
+            justify-content: center;
         }
 
         input[type="number"] {
@@ -115,6 +119,7 @@
             width: 4px;
             height: 160px;
             transform-origin: top center;
+            transition: transform 0.2s ease;
         }
 
         .pendulum {
@@ -185,6 +190,36 @@
         #beatsPerMeasure {
             width: 60px;
         }
+
+        /* Mobile-specific styles */
+        @media (max-width: 600px) {
+            .container {
+                padding: 20px 15px;
+                max-width: 100%;
+            }
+
+            .controls {
+                flex-direction: column;
+                align-items: center;
+            }
+
+            .bpm-control {
+                width: 100%;
+                justify-content: center;
+            }
+
+            input[type="range"] {
+                width: 100%;
+                max-width: 250px;
+            }
+        }
+
+        /* Loading indicator */
+        .loading {
+            display: none;
+            margin: 10px 0;
+            color: var(--primary-color);
+        }
     </style>
 </head>
 
@@ -210,6 +245,8 @@
 
         <div class="current-beat" id="beatCounter">Beat: 1</div>
 
+        <div class="loading" id="loading">Loading audio...</div>
+
         <div class="controls">
             <button id="playBtn">Start</button>
 
@@ -227,21 +264,23 @@
     </div>
 
     <script>
-        // Audio context for metronome sound
+        // Audio context and buffer for sounds
         let audioContext = null;
+        let accentedClickBuffer = null;
+        let regularClickBuffer = null;
+        let audioInitialized = false;
+        let audioLoading = false;
 
         // Metronome state
         let isPlaying = false;
         let tempo = 100; // BPM
         let beatsPerMeasure = 4;
         let currentBeat = 1;
-        let pendulumAngle = 0;
         let lastSwingDirection = 1; // 1 for right, -1 for left
 
         // Timing variables
         let nextNoteTime = 0;
         let timerID = null;
-        let lastTickTime = 0;
 
         // DOM elements
         const playBtn = document.getElementById('playBtn');
@@ -250,104 +289,112 @@
         const beatsPerMeasureInput = document.getElementById('beatsPerMeasure');
         const pendulumElement = document.getElementById('pendulum');
         const beatCounter = document.getElementById('beatCounter');
+        const loadingIndicator = document.getElementById('loading');
 
-        // Initialize audio context when user interacts
-        function initAudio() {
-            if (!audioContext) {
+        // Initialize audio context and load sounds
+        async function initAudio() {
+            if (audioInitialized) return Promise.resolve();
+            if (audioLoading) return new Promise(resolve => {
+                const checkInterval = setInterval(() => {
+                    if (audioInitialized) {
+                        clearInterval(checkInterval);
+                        resolve();
+                    }
+                }, 100);
+            });
+
+            audioLoading = true;
+            loadingIndicator.style.display = 'block';
+
+            try {
+                // Create audio context with fallbacks for different browsers
                 audioContext = new (window.AudioContext || window.webkitAudioContext)();
+
+                // Resume audio context (needed for iOS/Safari)
+                if (audioContext.state === 'suspended') {
+                    await audioContext.resume();
+                }
+
+                // Load click sounds
+                [accentedClickBuffer, regularClickBuffer] = await Promise.all([
+                    createClickBuffer(true),
+                    createClickBuffer(false)
+                ]);
+
+                audioInitialized = true;
+                audioLoading = false;
+                loadingIndicator.style.display = 'none';
+                return Promise.resolve();
+            } catch (error) {
+                console.error('Error initializing audio:', error);
+                audioLoading = false;
+                loadingIndicator.style.display = 'none';
+                alert('Failed to initialize audio. Please try again or use a different browser.');
+                return Promise.reject(error);
             }
         }
 
-        // Create wooden click sound using Web Audio API
-        function createWoodenClickSound(time, isAccented) {
-            if (!audioContext) return;
+        // Create pre-rendered click sound buffer (better for mobile)
+        function createClickBuffer(isAccented) {
+            return new Promise((resolve) => {
+                const duration = 0.1; // 100ms buffer
+                const sampleRate = audioContext.sampleRate;
+                const bufferSize = sampleRate * duration;
+                const buffer = audioContext.createBuffer(1, bufferSize, sampleRate);
+                const data = buffer.getChannelData(0);
 
-            // Create audio nodes
-            const clickOscillator = audioContext.createOscillator();
-            const noiseBuffer = createNoiseBuffer();
-            const noiseSource = audioContext.createBufferSource();
-            const clickGain = audioContext.createGain();
-            const noiseGain = audioContext.createGain();
-            const masterGain = audioContext.createGain();
-            const highpassFilter = audioContext.createBiquadFilter();
-            const lowpassFilter = audioContext.createBiquadFilter();
+                // Parameters for sound generation
+                const frequency = isAccented ? 1800 : 1300;
+                const attackTime = 0.001;
+                const decayTime = 0.03;
+                const amplitude = isAccented ? 0.7 : 0.5;
 
-            // Set up noise source
-            noiseSource.buffer = noiseBuffer;
+                // Fill buffer with synthesized click sound
+                for (let i = 0; i < bufferSize; i++) {
+                    const time = i / sampleRate;
 
-            // Configure oscillator for initial attack transient
-            clickOscillator.type = 'triangle';
-            clickOscillator.frequency.value = isAccented ? 2200 : 1800; // Higher pitch for accented beat
+                    // Envelope
+                    let envelope = 0;
+                    if (time < attackTime) {
+                        envelope = (time / attackTime) * amplitude;
+                    } else if (time < attackTime + decayTime) {
+                        envelope = amplitude * Math.exp(-(time - attackTime) * 70);
+                    }
 
-            // Configure filters
-            highpassFilter.type = 'highpass';
-            highpassFilter.frequency.value = 800;
-            highpassFilter.Q.value = 1;
+                    // Click tone (sine + noise)
+                    const tone = Math.sin(2 * Math.PI * frequency * time);
+                    const noise = (Math.random() * 2 - 1) * 0.3;
 
-            lowpassFilter.type = 'lowpass';
-            lowpassFilter.frequency.value = 5000;
-            lowpassFilter.Q.value = 1;
+                    data[i] = (tone * 0.7 + noise * 0.3) * envelope;
+                }
 
-            // Set up gain nodes
-            clickGain.gain.value = 0;
-            noiseGain.gain.value = 0;
-            masterGain.gain.value = isAccented ? 0.7 : 0.5; // Accented beats are louder
+                resolve(buffer);
+            });
+        }
 
-            // Connect the audio graph
-            // Click component path
-            clickOscillator.connect(clickGain);
-            clickGain.connect(highpassFilter);
+        // Play a pre-rendered click sound
+        function playClick(isAccented, time) {
+            if (!audioContext || !audioInitialized) return;
 
-            // Noise component path
-            noiseSource.connect(noiseGain);
-            noiseGain.connect(lowpassFilter);
+            const buffer = isAccented ? accentedClickBuffer : regularClickBuffer;
+            const source = audioContext.createBufferSource();
+            source.buffer = buffer;
 
-            // Combine and output
-            highpassFilter.connect(masterGain);
-            lowpassFilter.connect(masterGain);
-            masterGain.connect(audioContext.destination);
+            // Add a gain node for volume control
+            const gainNode = audioContext.createGain();
+            gainNode.gain.value = 1.0;
 
-            // Schedule click envelope
-            const startTime = time;
-            const clickDuration = 0.03; // 30ms for the click sound
+            source.connect(gainNode);
+            gainNode.connect(audioContext.destination);
 
-            // Schedule the click component (quick attack, quick decay)
-            clickOscillator.start(startTime);
-            clickOscillator.stop(startTime + clickDuration);
-
-            // Envelope for click
-            clickGain.gain.setValueAtTime(0, startTime);
-            clickGain.gain.linearRampToValueAtTime(0.9, startTime + 0.001);
-            clickGain.gain.exponentialRampToValueAtTime(0.001, startTime + clickDuration);
-
-            // Schedule the noise component (adds texture)
-            noiseSource.start(startTime);
-            noiseSource.stop(startTime + clickDuration);
-
-            // Envelope for noise
-            noiseGain.gain.setValueAtTime(0, startTime);
-            noiseGain.gain.linearRampToValueAtTime(0.3, startTime + 0.002);
-            noiseGain.gain.exponentialRampToValueAtTime(0.001, startTime + clickDuration);
+            // Schedule the sound to play at the specified time
+            source.start(time);
 
             // Clean up
-            setTimeout(() => {
-                masterGain.disconnect();
-            }, (time - audioContext.currentTime) * 1000 + 100);
-        }
-
-        // Create noise buffer for wooden texture
-        function createNoiseBuffer() {
-            const bufferSize = audioContext.sampleRate * 0.1; // 100ms buffer
-            const buffer = audioContext.createBuffer(1, bufferSize, audioContext.sampleRate);
-            const data = buffer.getChannelData(0);
-
-            // Fill buffer with noise
-            for (let i = 0; i < bufferSize; i++) {
-                // Create noise with more energy in higher frequencies for "wooden" character
-                data[i] = (Math.random() * 2 - 1) * Math.pow(i / bufferSize, 0.5);
-            }
-
-            return buffer;
+            source.onended = () => {
+                source.disconnect();
+                gainNode.disconnect();
+            };
         }
 
         // Schedule the next tick
@@ -357,8 +404,8 @@
             // Determine if this is the first beat of the measure
             const isAccented = currentBeat === 1;
 
-            // Schedule the tick
-            createWoodenClickSound(nextNoteTime, isAccented);
+            // Schedule the click sound
+            playClick(isAccented, nextNoteTime);
 
             // Update UI - we need to check if we're still in the playing state
             if (isPlaying) {
@@ -374,9 +421,6 @@
 
                 // Change swing direction for next beat
                 lastSwingDirection *= -1;
-
-                // Record last tick time for animations
-                lastTickTime = audioContext.currentTime;
 
                 // Advance beat counter
                 currentBeat++;
@@ -397,7 +441,7 @@
         // Main timing scheduler
         function scheduler() {
             // Check if audio context is available
-            if (!audioContext) return;
+            if (!audioContext || !audioInitialized) return;
 
             // Schedule notes until we've scheduled ahead enough
             while (nextNoteTime < audioContext.currentTime + 0.1) {
@@ -409,9 +453,17 @@
         }
 
         // Start metronome
-        function startMetronome() {
-            if (!isPlaying) {
-                initAudio();
+        async function startMetronome() {
+            if (isPlaying) return;
+
+            try {
+                // Make sure audio is initialized
+                await initAudio();
+
+                // Resume audio context (needed for iOS)
+                if (audioContext.state === 'suspended') {
+                    await audioContext.resume();
+                }
 
                 // Reset timing
                 currentBeat = 1;
@@ -427,25 +479,28 @@
 
                 // Start scheduler
                 scheduler();
+            } catch (error) {
+                console.error('Error starting metronome:', error);
+                alert('Failed to start audio. Please try tapping the screen and then press Start again.');
             }
         }
 
         // Stop metronome
         function stopMetronome() {
-            if (isPlaying) {
-                // Clear scheduling timer
-                clearTimeout(timerID);
-                timerID = null;
+            if (!isPlaying) return;
 
-                // Reset UI
-                playBtn.textContent = 'Start';
-                playBtn.classList.remove('playing');
+            // Clear scheduling timer
+            clearTimeout(timerID);
+            timerID = null;
 
-                // Reset pendulum to center
-                pendulumElement.style.transform = 'translateX(-50%) rotate(0deg)';
+            // Reset UI
+            playBtn.textContent = 'Start';
+            playBtn.classList.remove('playing');
 
-                isPlaying = false;
-            }
+            // Reset pendulum to center
+            pendulumElement.style.transform = 'translateX(-50%) rotate(0deg)';
+
+            isPlaying = false;
         }
 
         // Toggle metronome
@@ -458,7 +513,13 @@
         }
 
         // Event listeners
-        playBtn.addEventListener('click', toggleMetronome);
+        playBtn.addEventListener('click', () => {
+            // For iOS, we need to unlock audio on user interaction
+            if (audioContext && audioContext.state === 'suspended') {
+                audioContext.resume();
+            }
+            toggleMetronome();
+        });
 
         bpmInput.addEventListener('change', () => {
             tempo = Number(bpmInput.value);
@@ -481,6 +542,25 @@
             if (currentBeat > beatsPerMeasure) {
                 currentBeat = 1;
                 beatCounter.textContent = `Beat: ${currentBeat}`;
+            }
+        });
+
+        // Handle touch events better on mobile
+        document.addEventListener('touchstart', function () {
+            // This empty handler helps with touch responsiveness
+        }, false);
+
+        // Pre-initialize audio on page load
+        window.addEventListener('load', () => {
+            // We'll initialize audio on the first user interaction instead
+            // to comply with browser autoplay policies
+        });
+
+        // Initialize on visibility change (helps with iOS and mobile browsers)
+        document.addEventListener('visibilitychange', () => {
+            if (document.visibilityState === 'visible' && isPlaying) {
+                stopMetronome();
+                alert('Audio was paused because the app was in the background. Press Start to continue.');
             }
         });
 
